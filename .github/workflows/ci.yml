@@ -1,0 +1,111 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  compile:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        include:
+          - os: windows-latest
+            generator: "-G Visual Studio 17 2022"
+            target-platform: win64
+          - os: windows-latest
+            generator: "-G MSYS Makefiles"
+            target-platform: ucrt64
+          - os: ubuntu-latest
+            target-platform: linux64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup CMake
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: '3.14.x'
+
+      - name: Configure CMake
+        run: |
+          cd CSource
+          cmake -S . -B build ${{ matrix.generator }}
+
+      - name: Build project
+        run: |
+          cd CSource
+          cmake --build build --target install
+
+      - name: Archive library artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Resources/Library/${{ target-platform }}
+          path: |
+            ClaRaDelay/Resources/Library/${{ target-platform }}
+
+  commit:
+    needs: compile
+    permissions:
+    # Give the default GITHUB_TOKEN write permission to commit and push the
+    # added or changed files to the repository.
+    contents: write
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get library artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: |
+            ClaRaDelay/Resources/Library
+          merge-multiple: true
+
+      # Commit all changed libraries back to the repository
+      - uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          file_pattern: 'Resources/Library/**/*.a Resources/Library/**/*.lib'
+
+  test:
+    needs: commit
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - uses: OpenModelica/setup-openmodelica@v1.0
+        with:
+          version: '1.22.1'
+          packages: |
+            'omc'
+            'omsimulator'
+          libraries: |
+            'Modelica 4.0.0'
+          omc-diff: true
+
+      - uses: OpenModelica/openmodelica-library-testing@v0.1
+        with:
+          library: 'ClaRaDelay'
+          library-version: '0.2.0'
+          modelica-file: 'ClaRaDelay/package.mo'
+          omc-version: 'stable'
